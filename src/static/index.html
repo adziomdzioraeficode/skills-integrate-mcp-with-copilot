@@ -39,6 +39,37 @@
         </form>
         <div id="message" class="hidden"></div>
       </section>
+
+      <section id="members-container">
+        <h3>Members</h3>
+
+        <div id="members-list">
+          <p>Loading members...</p>
+        </div>
+
+        <h4 id="member-form-title">Add Member</h4>
+        <form id="member-form">
+          <div class="form-group">
+            <label for="member-email">Email:</label>
+            <input type="email" id="member-email" required placeholder="student@mergington.edu" />
+          </div>
+
+          <div class="form-group">
+            <label for="member-name">Name:</label>
+            <input type="text" id="member-name" required placeholder="Student Name" />
+          </div>
+
+          <div class="form-group">
+            <label for="member-grade">Grade:</label>
+            <input type="text" id="member-grade" required placeholder="10" />
+          </div>
+
+          <button type="submit" id="member-submit-btn">Create Member</button>
+          <button type="button" id="member-cancel-btn" class="secondary hidden">Cancel Edit</button>
+        </form>
+
+        <div id="member-message" class="hidden"></div>
+      </section>
     </main>
 
     <footer>

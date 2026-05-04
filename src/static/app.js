@@ -4,6 +4,119 @@ document.addEventListener("DOMContentLoaded", () => {
   const signupForm = document.getElementById("signup-form");
   const messageDiv = document.getElementById("message");
 
+  const membersList = document.getElementById("members-list");
+  const memberForm = document.getElementById("member-form");
+  const memberMessageDiv = document.getElementById("member-message");
+  const memberFormTitle = document.getElementById("member-form-title");
+  const memberSubmitBtn = document.getElementById("member-submit-btn");
+  const memberCancelBtn = document.getElementById("member-cancel-btn");
+  const memberEmailInput = document.getElementById("member-email");
+  const memberNameInput = document.getElementById("member-name");
+  const memberGradeInput = document.getElementById("member-grade");
+
+  let editingMemberEmail = null;
+
+  function showMessage(targetDiv, text, type) {
+    targetDiv.textContent = text;
+    targetDiv.className = type;
+    targetDiv.classList.remove("hidden");
+
+    setTimeout(() => {
+      targetDiv.classList.add("hidden");
+    }, 5000);
+  }
+
+  function resetMemberForm() {
+    editingMemberEmail = null;
+    memberForm.reset();
+    memberEmailInput.disabled = false;
+    memberFormTitle.textContent = "Add Member";
+    memberSubmitBtn.textContent = "Create Member";
+    memberCancelBtn.classList.add("hidden");
+  }
+
+  function setMemberEditMode(email, member) {
+    editingMemberEmail = email;
+    memberEmailInput.value = email;
+    memberNameInput.value = member.name;
+    memberGradeInput.value = member.grade_level;
+    memberEmailInput.disabled = true;
+    memberFormTitle.textContent = "Edit Member";
+    memberSubmitBtn.textContent = "Update Member";
+    memberCancelBtn.classList.remove("hidden");
+  }
+
+  async function fetchMembers() {
+    try {
+      const response = await fetch("/members");
+      const members = await response.json();
+
+      membersList.innerHTML = "";
+      const entries = Object.entries(members);
+
+      if (entries.length === 0) {
+        membersList.innerHTML = "<p>No members yet.</p>";
+        return;
+      }
+
+      entries
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .forEach(([email, member]) => {
+          const memberCard = document.createElement("div");
+          memberCard.className = "member-card";
+
+          memberCard.innerHTML = `
+            <p><strong>${member.name}</strong></p>
+            <p>${email}</p>
+            <p>Grade: ${member.grade_level}</p>
+            <div class="member-actions">
+              <button class="edit-member-btn" data-email="${email}" type="button">Edit</button>
+              <button class="delete-member-btn" data-email="${email}" type="button">Delete</button>
+            </div>
+          `;
+
+          membersList.appendChild(memberCard);
+        });
+
+      document.querySelectorAll(".edit-member-btn").forEach((button) => {
+        button.addEventListener("click", () => {
+          const email = button.getAttribute("data-email");
+          setMemberEditMode(email, members[email]);
+        });
+      });
+
+      document.querySelectorAll(".delete-member-btn").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const email = button.getAttribute("data-email");
+
+          try {
+            const response = await fetch(`/members/${encodeURIComponent(email)}`, {
+              method: "DELETE",
+            });
+            const result = await response.json();
+
+            if (response.ok) {
+              showMessage(memberMessageDiv, result.message, "success");
+              if (editingMemberEmail === email) {
+                resetMemberForm();
+              }
+              fetchMembers();
+              fetchActivities();
+            } else {
+              showMessage(memberMessageDiv, result.detail || "Failed to delete member", "error");
+            }
+          } catch (error) {
+            showMessage(memberMessageDiv, "Failed to delete member. Please try again.", "error");
+            console.error("Error deleting member:", error);
+          }
+        });
+      });
+    } catch (error) {
+      membersList.innerHTML = "<p>Failed to load members. Please try again later.</p>";
+      console.error("Error fetching members:", error);
+    }
+  }
+
   // Function to fetch activities from API
   async function fetchActivities() {
     try {
@@ -12,6 +125,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // Clear loading message
       activitiesList.innerHTML = "";
+      activitySelect.innerHTML = '<option value="">-- Select an activity --</option>';
 
       // Populate activities list
       Object.entries(activities).forEach(([name, details]) => {
@@ -86,26 +200,15 @@ document.addEventListener("DOMContentLoaded", () => {
       const result = await response.json();
 
       if (response.ok) {
-        messageDiv.textContent = result.message;
-        messageDiv.className = "success";
+        showMessage(messageDiv, result.message, "success");
 
         // Refresh activities list to show updated participants
         fetchActivities();
       } else {
-        messageDiv.textContent = result.detail || "An error occurred";
-        messageDiv.className = "error";
+        showMessage(messageDiv, result.detail || "An error occurred", "error");
       }
-
-      messageDiv.classList.remove("hidden");
-
-      // Hide message after 5 seconds
-      setTimeout(() => {
-        messageDiv.classList.add("hidden");
-      }, 5000);
     } catch (error) {
-      messageDiv.textContent = "Failed to unregister. Please try again.";
-      messageDiv.className = "error";
-      messageDiv.classList.remove("hidden");
+      showMessage(messageDiv, "Failed to unregister. Please try again.", "error");
       console.error("Error unregistering:", error);
     }
   }
@@ -130,31 +233,70 @@ document.addEventListener("DOMContentLoaded", () => {
       const result = await response.json();
 
       if (response.ok) {
-        messageDiv.textContent = result.message;
-        messageDiv.className = "success";
+        showMessage(messageDiv, result.message, "success");
         signupForm.reset();
 
         // Refresh activities list to show updated participants
         fetchActivities();
       } else {
-        messageDiv.textContent = result.detail || "An error occurred";
-        messageDiv.className = "error";
+        showMessage(messageDiv, result.detail || "An error occurred", "error");
       }
-
-      messageDiv.classList.remove("hidden");
-
-      // Hide message after 5 seconds
-      setTimeout(() => {
-        messageDiv.classList.add("hidden");
-      }, 5000);
     } catch (error) {
-      messageDiv.textContent = "Failed to sign up. Please try again.";
-      messageDiv.className = "error";
-      messageDiv.classList.remove("hidden");
+      showMessage(messageDiv, "Failed to sign up. Please try again.", "error");
       console.error("Error signing up:", error);
     }
   });
 
+  memberForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    const email = memberEmailInput.value.trim().toLowerCase();
+    const payload = {
+      name: memberNameInput.value.trim(),
+      grade_level: memberGradeInput.value.trim(),
+    };
+
+    try {
+      let response;
+
+      if (editingMemberEmail) {
+        response = await fetch(`/members/${encodeURIComponent(editingMemberEmail)}`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        response = await fetch("/members", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ email, ...payload }),
+        });
+      }
+
+      const result = await response.json();
+
+      if (response.ok) {
+        showMessage(memberMessageDiv, result.message, "success");
+        resetMemberForm();
+        fetchMembers();
+      } else {
+        showMessage(memberMessageDiv, result.detail || "Failed to save member", "error");
+      }
+    } catch (error) {
+      showMessage(memberMessageDiv, "Failed to save member. Please try again.", "error");
+      console.error("Error saving member:", error);
+    }
+  });
+
+  memberCancelBtn.addEventListener("click", () => {
+    resetMemberForm();
+  });
+
   // Initialize app
   fetchActivities();
+  fetchMembers();
 });
