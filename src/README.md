@@ -6,6 +6,7 @@ A super simple FastAPI application that allows students to view and sign up for 
 
 - View all available extracurricular activities
 - Sign up for activities
+- Full member CRUD (create, read, update, delete)
 
 ## Getting Started
 
@@ -31,6 +32,12 @@ A super simple FastAPI application that allows students to view and sign up for 
 | ------ | ----------------------------------------------------------------- | ------------------------------------------------------------------- |
 | GET    | `/activities`                                                     | Get all activities with their details and current participant count |
 | POST   | `/activities/{activity_name}/signup?email=student@mergington.edu` | Sign up for an activity                                             |
+| DELETE | `/activities/{activity_name}/unregister?email=student@mergington.edu` | Unregister from an activity                                         |
+| GET    | `/members`                                                        | Get all members                                                     |
+| GET    | `/members/{email}`                                                | Get a single member by email                                        |
+| POST   | `/members`                                                        | Create a member                                                     |
+| PUT    | `/members/{email}`                                                | Update an existing member                                           |
+| DELETE | `/members/{email}`                                                | Delete a member                                                     |
 
 ## Data Model
 
@@ -47,4 +54,25 @@ The application uses a simple data model with meaningful identifiers:
    - Name
    - Grade level
 
-All data is stored in memory, which means data will be reset when the server restarts.
+Data is stored in `src/db.json`, so changes persist across server restarts.
+
+## Member Payload Examples
+
+Create member (`POST /members`):
+
+```json
+{
+   "email": "student@mergington.edu",
+   "name": "Student Name",
+   "grade_level": "10"
+}
+```
+
+Update member (`PUT /members/{email}`):
+
+```json
+{
+   "name": "Updated Name",
+   "grade_level": "11"
+}
+```

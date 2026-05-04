@@ -9,7 +9,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 import os
+import json
 from pathlib import Path
+from typing import Optional
+from pydantic import BaseModel
 
 app = FastAPI(title="Mergington High School API",
               description="API for viewing and signing up for extracurricular activities")
@@ -19,8 +22,8 @@ current_dir = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
           "static")), name="static")
 
-# In-memory activity database
-activities = {
+# Default activity data
+default_activities = {
     "Chess Club": {
         "description": "Learn strategies and compete in chess tournaments",
         "schedule": "Fridays, 3:30 PM - 5:00 PM",
@@ -78,6 +81,64 @@ activities = {
 }
 
 
+class MemberCreate(BaseModel):
+    email: str
+    name: str
+    grade_level: str
+
+
+class MemberUpdate(BaseModel):
+    name: Optional[str] = None
+    grade_level: Optional[str] = None
+
+
+db_file = current_dir / "db.json"
+
+
+def _is_valid_email(email: str) -> bool:
+    return isinstance(email, str) and "@" in email and "." in email.split("@")[-1]
+
+
+def _build_default_members(activity_data: dict) -> dict:
+    members = {}
+    for activity in activity_data.values():
+        for email in activity["participants"]:
+            local_name = email.split("@")[0].replace(".", " ").title()
+            members[email] = {
+                "name": local_name,
+                "grade_level": "Unknown"
+            }
+    return members
+
+
+def _load_db() -> dict:
+    if not db_file.exists():
+        data = {
+            "activities": default_activities,
+            "members": _build_default_members(default_activities)
+        }
+        _save_db(data)
+        return data
+
+    with open(db_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    # Ensure expected keys exist even if file is manually edited.
+    data.setdefault("activities", default_activities)
+    data.setdefault("members", _build_default_members(data["activities"]))
+    return data
+
+
+def _save_db(data: dict) -> None:
+    with open(db_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+
+db = _load_db()
+activities = db["activities"]
+members = db["members"]
+
+
 @app.get("/")
 def root():
     return RedirectResponse(url="/static/index.html")
@@ -88,9 +149,77 @@ def get_activities():
     return activities
 
 
+@app.get("/members")
+def get_members():
+    return members
+
+
+@app.get("/members/{email}")
+def get_member(email: str):
+    if email not in members:
+        raise HTTPException(status_code=404, detail="Member not found")
+    return {"email": email, **members[email]}
+
+
+@app.post("/members")
+def create_member(member: MemberCreate):
+    email = member.email.strip().lower()
+
+    if not _is_valid_email(email):
+        raise HTTPException(status_code=400, detail="Invalid email")
+
+    if email in members:
+        raise HTTPException(status_code=400, detail="Member already exists")
+
+    members[email] = {
+        "name": member.name.strip(),
+        "grade_level": member.grade_level.strip()
+    }
+    _save_db(db)
+    return {"message": "Member created", "member": {"email": email, **members[email]}}
+
+
+@app.put("/members/{email}")
+def update_member(email: str, member_update: MemberUpdate):
+    if email not in members:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+    if member_update.name is not None:
+        members[email]["name"] = member_update.name.strip()
+
+    if member_update.grade_level is not None:
+        members[email]["grade_level"] = member_update.grade_level.strip()
+
+    _save_db(db)
+    return {"message": "Member updated", "member": {"email": email, **members[email]}}
+
+
+@app.delete("/members/{email}")
+def delete_member(email: str):
+    if email not in members:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+    # Keep activity participant lists consistent with member records.
+    for activity in activities.values():
+        if email in activity["participants"]:
+            activity["participants"].remove(email)
+
+    deleted_member = members.pop(email)
+    _save_db(db)
+    return {"message": "Member deleted", "member": {"email": email, **deleted_member}}
+
+
 @app.post("/activities/{activity_name}/signup")
 def signup_for_activity(activity_name: str, email: str):
     """Sign up a student for an activity"""
+    email = email.strip().lower()
+
+    if email not in members:
+        raise HTTPException(
+            status_code=400,
+            detail="Member not found. Create the member first using /members"
+        )
+
     # Validate activity exists
     if activity_name not in activities:
         raise HTTPException(status_code=404, detail="Activity not found")
@@ -107,12 +236,15 @@ def signup_for_activity(activity_name: str, email: str):
 
     # Add student
     activity["participants"].append(email)
+    _save_db(db)
     return {"message": f"Signed up {email} for {activity_name}"}
 
 
 @app.delete("/activities/{activity_name}/unregister")
 def unregister_from_activity(activity_name: str, email: str):
     """Unregister a student from an activity"""
+    email = email.strip().lower()
+
     # Validate activity exists
     if activity_name not in activities:
         raise HTTPException(status_code=404, detail="Activity not found")
@@ -129,4 +261,5 @@ def unregister_from_activity(activity_name: str, email: str):
 
     # Remove student
     activity["participants"].remove(email)
+    _save_db(db)
     return {"message": f"Unregistered {email} from {activity_name}"}
