@@ -1,1 +1,265 @@
-"""\nHigh School Management System API\n\nA super simple FastAPI application that allows students to view and sign up\nfor extracurricular activities at Mergington High School.\n"""\n\nfrom fastapi import FastAPI, HTTPException, Header\nfrom fastapi.staticfiles import StaticFiles\nfrom fastapi.responses import RedirectResponse\nimport os\nimport json\nimport secrets\nfrom pathlib import Path\nfrom typing import Optional\nfrom pydantic import BaseModel\n\napp = FastAPI(title="Mergington High School API",\n              description="API for viewing and signing up for extracurricular activities")\n\n# Mount the static files directory\ncurrent_dir = Path(__file__).parent\napp.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,\n          "static")), name="static")\n\n# Default activity data\ndefault_activities = {\n    "Chess Club": {\n        "description": "Learn strategies and compete in chess tournaments",\n        "schedule": "Fridays, 3:30 PM - 5:00 PM",\n        "max_participants": 12,\n        "participants": ["michael@mergington.edu", "daniel@mergington.edu"]\n    },\n    "Programming Class": {\n        "description": "Learn programming fundamentals and build software projects",\n        "schedule": "Tuesdays and Thursdays, 3:30 PM - 4:30 PM",\n        "max_participants": 20,\n        "participants": ["emma@mergington.edu", "sophia@mergington.edu"]\n    },\n    "Gym Class": {\n        "description": "Physical education and sports activities",\n        "schedule": "Mondays, Wednesdays, Fridays, 2:00 PM - 3:00 PM",\n        "max_participants": 30,\n        "participants": ["john@mergington.edu", "olivia@mergington.edu"]\n    },\n    "Soccer Team": {\n        "description": "Join the school soccer team and compete in matches",\n        "schedule": "Tuesdays and Thursdays, 4:00 PM - 5:30 PM",\n        "max_participants": 22,\n        "participants": ["liam@mergington.edu", "noah@mergington.edu"]\n    },\n    "Basketball Team": {\n        "description": "Practice and play basketball with the school team",\n        "schedule": "Wednesdays and Fridays, 3:30 PM - 5:00 PM",\n        "max_participants": 15,\n        "participants": ["ava@mergington.edu", "mia@mergington.edu"]\n    },\n    "Art Club": {\n        "description": "Explore your creativity through painting and drawing",\n        "schedule": "Thursdays, 3:30 PM - 5:00 PM",\n        "max_participants": 15,\n        "participants": ["amelia@mergington.edu", "harper@mergington.edu"]\n    },\n    "Drama Club": {\n        "description": "Act, direct, and produce plays and performances",\n        "schedule": "Mondays and Wednesdays, 4:00 PM - 5:30 PM",\n        "max_participants": 20,\n        "participants": ["ella@mergington.edu", "scarlett@mergington.edu"]\n    },\n    "Math Club": {\n        "description": "Solve challenging problems and participate in math competitions",\n        "schedule": "Tuesdays, 3:30 PM - 4:30 PM",\n        "max_participants": 10,\n        "participants": ["james@mergington.edu", "benjamin@mergington.edu"]\n    },\n    "Debate Team": {\n        "description": "Develop public speaking and argumentation skills",\n        "schedule": "Fridays, 4:00 PM - 5:30 PM",\n        "max_participants": 12,\n        "participants": ["charlotte@mergington.edu", "henry@mergington.edu"]\n    }\n}\n\n\nclass MemberCreate(BaseModel):\n    email: str\n    name: str\n    grade_level: str\n\n\nclass MemberUpdate(BaseModel):\n    name: Optional[str] = None\n    grade_level: Optional[str] = None\n\n\nclass TeacherLogin(BaseModel):\n    username: str\n    password: str\n\n\ndb_file = current_dir / "db.json"\nteachers_file = current_dir / "teachers.json"\n\n\ndef _is_valid_email(email: str) -> bool:\n    return isinstance(email, str) and "@" in email and "." in email.split("@")[-1]\n\n\ndef _build_default_members(activity_data: dict) -> dict:\n    members = {}\n    for activity in activity_data.values():\n        for email in activity["participants"]:\n            local_name = email.split("@")[0].replace(".", " ").title()\n            members[email] = {\n                "name": local_name,\n                "grade_level": "Unknown"\n            }\n    return members\n\n\ndef _load_db() -> dict:\n    if not db_file.exists():\n        data = {\n            "activities": default_activities,\n            "members": _build_default_members(default_activities)\n        }\n        _save_db(data)\n        return data\n\n    with open(db_file, "r", encoding="utf-8") as f:\n        data = json.load(f)\n\n    # Ensure expected keys exist even if file is manually edited.\n    data.setdefault("activities", default_activities)\n    data.setdefault("members", _build_default_members(data["activities"]))\n    return data\n\n\ndef _load_teachers() -> dict:\n    if not teachers_file.exists():\n        default_teachers = {\n            "teachers": {\n                "teacher1": {\n                    "password": "teach123",\n                    "name": "Teacher One"\n                }\n            }\n        }\n        with open(teachers_file, "w", encoding="utf-8") as f:\n            json.dump(default_teachers, f, indent=2)\n        return default_teachers["teachers"]\n\n    with open(teachers_file, "r", encoding="utf-8") as f:\n        data = json.load(f)\n\n    return data.get("teachers", {})\n\n\ndef _save_db(data: dict) -> None:\n    with open(db_file, "w", encoding="utf-8") as f:\n        json.dump(data, f, indent=2)\n\n\ndb = _load_db()\nactivities = db["activities"]\nmembers = db["members"]\nteachers = _load_teachers()\n\n# In-memory teacher session store keyed by random token.\nactive_sessions = {}\n\n\ndef _require_teacher(authorization: Optional[str]) -> str:\n    if not authorization or not authorization.startswith("Bearer "):\n        raise HTTPException(status_code=401, detail="Teacher login required")\n\n    token = authorization.split(" ", 1)[1]\n    username = active_sessions.get(token)\n    if not username:\n        raise HTTPException(status_code=401, detail="Invalid or expired session")\n\n    return username\n\n\n@app.get("/")\ndef root():\n    return RedirectResponse(url="/static/index.html")\n\n\n@app.get("/activities")\ndef get_activities():\n    return activities\n\n\n@app.post("/auth/login")\ndef teacher_login(login_data: TeacherLogin):\n    username = login_data.username.strip()\n    password = login_data.password\n\n    teacher = teachers.get(username)\n    if not teacher or teacher.get("password") != password:\n        raise HTTPException(status_code=401, detail="Invalid username or password")\n\n    token = secrets.token_urlsafe(24)\n    active_sessions[token] = username\n    return {\n        "message": "Login successful",\n        "token": token,\n        "teacher": {\n            "username": username,\n            "name": teacher.get("name", username)\n        }\n    }\n\n\n@app.post("/auth/logout")\ndef teacher_logout(authorization: Optional[str] = Header(default=None)):\n    if authorization and authorization.startswith("Bearer "):\n        token = authorization.split(" ", 1)[1]\n        active_sessions.pop(token, None)\n    return {"message": "Logged out"}\n\n\n@app.get("/auth/status")\ndef auth_status(authorization: Optional[str] = Header(default=None)):\n    if not authorization or not authorization.startswith("Bearer "):\n        return {"authenticated": False}\n\n    token = authorization.split(" ", 1)[1]\n    username = active_sessions.get(token)\n    if not username:\n        return {"authenticated": False}\n\n    teacher = teachers.get(username, {})\n    return {\n        "authenticated": True,\n        "teacher": {\n            "username": username,\n            "name": teacher.get("name", username)\n        }\n    }\n\n\n@app.get("/members")\ndef get_members():\n    return members\n\n\n@app.get("/members/{email}")\ndef get_member(email: str):\n    if email not in members:\n        raise HTTPException(status_code=404, detail="Member not found")\n    return {"email": email, **members[email]}\n\n\n@app.post("/members")\ndef create_member(member: MemberCreate):\n    email = member.email.strip().lower()\n\n    if not _is_valid_email(email):\n        raise HTTPException(status_code=400, detail="Invalid email")\n\n    if email in members:\n        raise HTTPException(status_code=400, detail="Member already exists")\n\n    members[email] = {\n        "name": member.name.strip(),\n        "grade_level": member.grade_level.strip()\n    }\n    _save_db(db)\n    return {"message": "Member created", "member": {"email": email, **members[email]}}\n\n\n@app.put("/members/{email}")\ndef update_member(email: str, member_update: MemberUpdate):\n    if email not in members:\n        raise HTTPException(status_code=404, detail="Member not found")\n\n    if member_update.name is not None:\n        members[email]["name"] = member_update.name.strip()\n\n    if member_update.grade_level is not None:\n        members[email]["grade_level"] = member_update.grade_level.strip()\n\n    _save_db(db)\n    return {"message": "Member updated", "member": {"email": email, **members[email]}}\n\n\n@app.delete("/members/{email}")\ndef delete_member(email: str):\n    if email not in members:\n        raise HTTPException(status_code=404, detail="Member not found")\n\n    # Keep activity participant lists consistent with member records.\n    for activity in activities.values():\n        if email in activity["participants"]:\n            activity["participants"].remove(email)\n\n    deleted_member = members.pop(email)\n    _save_db(db)\n    return {"message": "Member deleted", "member": {"email": email, **deleted_member}}\n\n\n@app.post("/activities/{activity_name}/signup")\ndef signup_for_activity(\n    activity_name: str,\n    email: str,\n    authorization: Optional[str] = Header(default=None)\n):\n    \"\"\"Sign up a student for an activity\"\"\"\n    _require_teacher(authorization)\n    email = email.strip().lower()\n\n    if email not in members:\n        raise HTTPException(\n            status_code=400,\n            detail="Member not found. Create the member first using /members"\n        )\n\n    # Validate activity exists\n    if activity_name not in activities:\n        raise HTTPException(status_code=404, detail="Activity not found")\n\n    # Get the specific activity\n    activity = activities[activity_name]\n\n    # Validate student is not already signed up\n    if email in activity["participants"]:\n        raise HTTPException(\n            status_code=400,\n            detail="Student is already signed up"\n        )\n\n    # Add student\n    activity["participants"].append(email)\n    _save_db(db)\n    return {"message": f"Signed up {email} for {activity_name}"}\n\n\n@app.delete("/activities/{activity_name}/unregister")\ndef unregister_from_activity(\n    activity_name: str,\n    email: str,\n    authorization: Optional[str] = Header(default=None)\n):\n    \"\"\"Unregister a student from an activity\"\"\"\n    _require_teacher(authorization)\n    email = email.strip().lower()\n\n    # Validate activity exists\n    if activity_name not in activities:\n        raise HTTPException(status_code=404, detail="Activity not found")\n\n    # Get the specific activity\n    activity = activities[activity_name]\n\n    # Validate student is signed up\n    if email not in activity["participants"]:\n        raise HTTPException(\n            status_code=400,\n            detail="Student is not signed up for this activity"\n        )\n\n    # Remove student\n    activity["participants"].remove(email)\n    _save_db(db)\n    return {"message": f"Unregistered {email} from {activity_name}"}
+"""
+High School Management System API
+
+A super simple FastAPI application that allows students to view and sign up
+for extracurricular activities at Mergington High School.
+"""
+
+from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import RedirectResponse
+import os
+import json
+from pathlib import Path
+from typing import Optional
+from pydantic import BaseModel
+
+app = FastAPI(title="Mergington High School API",
+              description="API for viewing and signing up for extracurricular activities")
+
+# Mount the static files directory
+current_dir = Path(__file__).parent
+app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
+          "static")), name="static")
+
+# Default activity data
+default_activities = {
+    "Chess Club": {
+        "description": "Learn strategies and compete in chess tournaments",
+        "schedule": "Fridays, 3:30 PM - 5:00 PM",
+        "max_participants": 12,
+        "participants": ["michael@mergington.edu", "daniel@mergington.edu"]
+    },
+    "Programming Class": {
+        "description": "Learn programming fundamentals and build software projects",
+        "schedule": "Tuesdays and Thursdays, 3:30 PM - 4:30 PM",
+        "max_participants": 20,
+        "participants": ["emma@mergington.edu", "sophia@mergington.edu"]
+    },
+    "Gym Class": {
+        "description": "Physical education and sports activities",
+        "schedule": "Mondays, Wednesdays, Fridays, 2:00 PM - 3:00 PM",
+        "max_participants": 30,
+        "participants": ["john@mergington.edu", "olivia@mergington.edu"]
+    },
+    "Soccer Team": {
+        "description": "Join the school soccer team and compete in matches",
+        "schedule": "Tuesdays and Thursdays, 4:00 PM - 5:30 PM",
+        "max_participants": 22,
+        "participants": ["liam@mergington.edu", "noah@mergington.edu"]
+    },
+    "Basketball Team": {
+        "description": "Practice and play basketball with the school team",
+        "schedule": "Wednesdays and Fridays, 3:30 PM - 5:00 PM",
+        "max_participants": 15,
+        "participants": ["ava@mergington.edu", "mia@mergington.edu"]
+    },
+    "Art Club": {
+        "description": "Explore your creativity through painting and drawing",
+        "schedule": "Thursdays, 3:30 PM - 5:00 PM",
+        "max_participants": 15,
+        "participants": ["amelia@mergington.edu", "harper@mergington.edu"]
+    },
+    "Drama Club": {
+        "description": "Act, direct, and produce plays and performances",
+        "schedule": "Mondays and Wednesdays, 4:00 PM - 5:30 PM",
+        "max_participants": 20,
+        "participants": ["ella@mergington.edu", "scarlett@mergington.edu"]
+    },
+    "Math Club": {
+        "description": "Solve challenging problems and participate in math competitions",
+        "schedule": "Tuesdays, 3:30 PM - 4:30 PM",
+        "max_participants": 10,
+        "participants": ["james@mergington.edu", "benjamin@mergington.edu"]
+    },
+    "Debate Team": {
+        "description": "Develop public speaking and argumentation skills",
+        "schedule": "Fridays, 4:00 PM - 5:30 PM",
+        "max_participants": 12,
+        "participants": ["charlotte@mergington.edu", "henry@mergington.edu"]
+    }
+}
+
+
+class MemberCreate(BaseModel):
+    email: str
+    name: str
+    grade_level: str
+
+
+class MemberUpdate(BaseModel):
+    name: Optional[str] = None
+    grade_level: Optional[str] = None
+
+
+db_file = current_dir / "db.json"
+
+
+def _is_valid_email(email: str) -> bool:
+    return isinstance(email, str) and "@" in email and "." in email.split("@")[-1]
+
+
+def _build_default_members(activity_data: dict) -> dict:
+    members = {}
+    for activity in activity_data.values():
+        for email in activity["participants"]:
+            local_name = email.split("@")[0].replace(".", " ").title()
+            members[email] = {
+                "name": local_name,
+                "grade_level": "Unknown"
+            }
+    return members
+
+
+def _load_db() -> dict:
+    if not db_file.exists():
+        data = {
+            "activities": default_activities,
+            "members": _build_default_members(default_activities)
+        }
+        _save_db(data)
+        return data
+
+    with open(db_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    # Ensure expected keys exist even if file is manually edited.
+    data.setdefault("activities", default_activities)
+    data.setdefault("members", _build_default_members(data["activities"]))
+    return data
+
+
+def _save_db(data: dict) -> None:
+    with open(db_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+
+db = _load_db()
+activities = db["activities"]
+members = db["members"]
+
+
+@app.get("/")
+def root():
+    return RedirectResponse(url="/static/index.html")
+
+
+@app.get("/activities")
+def get_activities():
+    return activities
+
+
+@app.get("/members")
+def get_members():
+    return members
+
+
+@app.get("/members/{email}")
+def get_member(email: str):
+    if email not in members:
+        raise HTTPException(status_code=404, detail="Member not found")
+    return {"email": email, **members[email]}
+
+
+@app.post("/members")
+def create_member(member: MemberCreate):
+    email = member.email.strip().lower()
+
+    if not _is_valid_email(email):
+        raise HTTPException(status_code=400, detail="Invalid email")
+
+    if email in members:
+        raise HTTPException(status_code=400, detail="Member already exists")
+
+    members[email] = {
+        "name": member.name.strip(),
+        "grade_level": member.grade_level.strip()
+    }
+    _save_db(db)
+    return {"message": "Member created", "member": {"email": email, **members[email]}}
+
+
+@app.put("/members/{email}")
+def update_member(email: str, member_update: MemberUpdate):
+    if email not in members:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+    if member_update.name is not None:
+        members[email]["name"] = member_update.name.strip()
+
+    if member_update.grade_level is not None:
+        members[email]["grade_level"] = member_update.grade_level.strip()
+
+    _save_db(db)
+    return {"message": "Member updated", "member": {"email": email, **members[email]}}
+
+
+@app.delete("/members/{email}")
+def delete_member(email: str):
+    if email not in members:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+    # Keep activity participant lists consistent with member records.
+    for activity in activities.values():
+        if email in activity["participants"]:
+            activity["participants"].remove(email)
+
+    deleted_member = members.pop(email)
+    _save_db(db)
+    return {"message": "Member deleted", "member": {"email": email, **deleted_member}}
+
+
+@app.post("/activities/{activity_name}/signup")
+def signup_for_activity(activity_name: str, email: str):
+    """Sign up a student for an activity"""
+    email = email.strip().lower()
+
+    if email not in members:
+        raise HTTPException(
+            status_code=400,
+            detail="Member not found. Create the member first using /members"
+        )
+
+    # Validate activity exists
+    if activity_name not in activities:
+        raise HTTPException(status_code=404, detail="Activity not found")
+
+    # Get the specific activity
+    activity = activities[activity_name]
+
+    # Validate student is not already signed up
+    if email in activity["participants"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Student is already signed up"
+        )
+
+    # Add student
+    activity["participants"].append(email)
+    _save_db(db)
+    return {"message": f"Signed up {email} for {activity_name}"}
+
+
+@app.delete("/activities/{activity_name}/unregister")
+def unregister_from_activity(activity_name: str, email: str):
+    """Unregister a student from an activity"""
+    email = email.strip().lower()
+
+    # Validate activity exists
+    if activity_name not in activities:
+        raise HTTPException(status_code=404, detail="Activity not found")
+
+    # Get the specific activity
+    activity = activities[activity_name]
+
+    # Validate student is signed up
+    if email not in activity["participants"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Student is not signed up for this activity"
+        )
+
+    # Remove student
+    activity["participants"].remove(email)
+    _save_db(db)
+    return {"message": f"Unregistered {email} from {activity_name}"}
